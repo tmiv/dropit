@@ -2,11 +2,11 @@ import { writable } from 'svelte/store';
 
 export interface WorkoutSet {
     id: number;
-    enabled: boolean;
-    checked: boolean;
+    state: 'completed' | 'next' | 'due' | 'active' | 'future';
     timeLeft: number;
     startTime: number | null;  // Unix timestamp when timer started
     completionTime: string | null;  // Time when set was completed
+    dueTime: number | null; // When this set is scheduled to be due
 }
 
 export interface DailyWorkout {
@@ -23,6 +23,7 @@ export const currentWorkout = writable<DailyWorkout | null>(null);
 
 export class WorkoutDB {
     private db: IDBDatabase | null = null;
+    private startTime: number = 9; // Default to 9AM for first set
 
     async init() {
         return new Promise<void>((resolve, reject) => {
@@ -67,16 +68,35 @@ export class WorkoutDB {
             date: today,
             sets: Array(8).fill(null).map((_, i) => ({
                 id: i,
-                enabled: i === 0,
-                checked: false,
-                timeLeft: 3600,
+                state: i === 0 ? 'next' : 'future',
+                timeLeft: 2700, // 45 minutes
                 startTime: null,
-                completionTime: null
+                completionTime: null,
+                dueTime: i === 0 ? this.getFirstSetDueTime() : null
             }))
         };
 
         await this.saveWorkout(newWorkout);
         return newWorkout;
+    }
+
+    getFirstSetDueTime(): number {
+        // Calculate timestamp for today at the configured start time
+        const now = new Date();
+        const dueDate = new Date(
+            now.getFullYear(),
+            now.getMonth(),
+            now.getDate(),
+            this.startTime, // Hour (e.g., 9 for 9 AM)
+            0, // Minutes
+            0 // Seconds
+        );
+        return dueDate.getTime();
+    }
+
+    // Calculate due time for next set (45 minutes after previous set was completed)
+    calculateNextDueTime(previousSetCompletionTime: number): number {
+        return previousSetCompletionTime + (45 * 60 * 1000); // 45 minutes in milliseconds
     }
 
     private async getWorkout(date: string): Promise<DailyWorkout | null> {

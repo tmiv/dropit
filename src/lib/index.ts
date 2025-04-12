@@ -1,1 +1,2 @@
-// place files you want to import through the `$lib` alias in this folder.
+// Re-export all from db.ts to simplify imports
+export * from './db';

@@ -1,10 +1,20 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import SetCard from './components/SetCard.svelte';
-  import { db, currentWorkout, type WorkoutSet } from './lib/db';
+  import { db, currentWorkout, type WorkoutSet } from './lib';
 
   let sets: WorkoutSet[] = [];
-  let deferredPrompt: any;
+  // Define interface for BeforeInstallPromptEvent which isn't in standard lib
+  interface BeforeInstallPromptEvent extends Event {
+    readonly platforms: string[];
+    prompt(): Promise<void>;
+    readonly userChoice: Promise<{
+      outcome: 'accepted' | 'dismissed';
+      platform: string;
+    }>;
+  }
+
+  let installPrompt: BeforeInstallPromptEvent | null = null;
 
   // Subscribe to workout changes
   $: if ($currentWorkout) {
@@ -12,13 +22,13 @@
      }
 
   onMount(async () => {
-        window.addEventListener('beforeinstallprompt', (e) => {
+        window.addEventListener('beforeinstallprompt', (e: Event) => {
           e.preventDefault();
-          deferredPrompt = e;
+          installPrompt = e as BeforeInstallPromptEvent;
         });
 
         window.addEventListener('appinstalled', () => {
-          deferredPrompt = null;
+          installPrompt = null;
         });
 
         // Initialize database and load today's workout
@@ -44,29 +54,88 @@
                 const workout = await db.getTodayWorkout();
                 currentWorkout.set(workout);
                 channel.postMessage('update'); // Notify other tabs
+            } else if (event.data.type === 'WORKOUT_UPDATED') {
+                const workout = await db.getTodayWorkout();
+                currentWorkout.set(workout);
+            } else if (event.data.type === 'ACTIVATE_SET') {
+                const setIndex = event.data.setIndex;
+                if (typeof setIndex === 'number' && setIndex >= 0 && $currentWorkout && setIndex < $currentWorkout.sets.length) {
+                    handleStartSet(setIndex);
+                }
             }
         });
+        
+        // Check URL params when loading the app
+        const params = new URLSearchParams(window.location.search);
+        const setIndex = params.get('setIndex');
+        
+        // If we have a setIndex param, activate that set
+        if (setIndex && workout) {
+            const index = parseInt(setIndex);
+            if (!isNaN(index) && index >= 0 && index < workout.sets.length) {
+                // Only activate the set if it's in 'next' or 'due' state
+                if (workout.sets[index].state === 'next' || workout.sets[index].state === 'due') {
+                    handleStartSet(index);
+                }
+            }
+            
+            // Clean up the URL
+            window.history.replaceState({}, document.title, window.location.pathname);
+        }
     });
 
   async function installApp() {
-    if (!deferredPrompt) return;
+    if (!installPrompt) return;
     
-    deferredPrompt.prompt();
-    const { outcome } = await deferredPrompt.userChoice;
-    deferredPrompt = null;
+    // Show the installation prompt
+    installPrompt.prompt();
+    
+    // Wait for the user's choice
+    const { outcome } = await installPrompt.userChoice;
+    console.log(`Installation ${outcome}`);
+    
+    // Clear the saved prompt, we can't use it twice
+    installPrompt = null;
+  }
+
+  async function handleStartSet(index: number) {
+      if (!$currentWorkout) return;
+
+      const workout = { ...$currentWorkout };
+      const set = workout.sets[index];
+      
+      // Only allow starting a set if it's next or due
+      if (set.state !== 'next' && set.state !== 'due') return;
+      
+      // Transition to active state
+      set.state = 'active';
+      set.startTime = Date.now();
+      
+      await db.saveWorkout(workout);
+      
+      // Notify other tabs
+      const channel = new BroadcastChannel('workout-updates');
+      channel.postMessage('update');
   }
 
   async function handleCheck(index: number) {
       if (!$currentWorkout) return;
 
       const workout = { ...$currentWorkout };
-      workout.sets[index].checked = true;
+      const now = Date.now();
+      
+      // Mark current set as completed
+      workout.sets[index].state = 'completed';
       workout.sets[index].completionTime = new Date().toLocaleTimeString();
       
       // Enable next set if exists
       if (index < workout.sets.length - 1) {
-          workout.sets[index + 1].enabled = true;
-          workout.sets[index + 1].startTime = Date.now();
+          const nextSet = workout.sets[index + 1];
+          if (nextSet.state === 'future') {
+              nextSet.state = 'next';
+              // Next set is due 45 minutes after this set was completed
+              nextSet.dueTime = db.calculateNextDueTime(now);
+          }
       }
 
       await db.saveWorkout(workout);
@@ -76,23 +145,19 @@
       channel.postMessage('update');
   }
 
-  // Format seconds to MM:SS
-  function formatTime(seconds: number) {
-      const minutes = Math.floor(seconds / 60);
-      const remainingSeconds = seconds % 60;
-      return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}`;
+  // Calculate time left based on dueTime
+  function getTimeLeft(set: WorkoutSet): number {
+      if (!set.dueTime) return 2700; // 45 minutes
+      const now = Date.now();
+      const remaining = Math.max(0, set.dueTime - now);
+      return Math.floor(remaining / 1000);
   }
 
-  // Calculate time left based on startTime
-  function getTimeLeft(set: WorkoutSet): number {
-      if (!set.startTime) return 3600;
-      const elapsed = Math.floor((Date.now() - set.startTime) / 1000);
-      return Math.max(3600 - elapsed, 0);
-  }
+  // The URL param checking is now handled in the main onMount function
 </script>
   
 <main class="container">
-  {#if deferredPrompt}
+  {#if installPrompt}
     <button class="install-button" on:click={installApp}>
       Install App
     </button>
@@ -103,12 +168,12 @@
           {#each sets as set, i}
               <SetCard 
                   setNumber={i + 1}
-                  state={set.checked ? 'completed' : (set.enabled && set.startTime ? 'next' : (set.enabled ? 'upcoming' : 'disabled'))}
+                  state={set.state}
                   timeLeft={getTimeLeft(set)}
                   completionTime={set.completionTime}
-                  estimatedTime={set.enabled && !set.checked && !set.startTime ? 'in 1 hour' : null}
-                  isEnabled={set.enabled}
+                  dueTime={set.dueTime}
                   onDone={() => handleCheck(i)}
+                  onStart={() => handleStartSet(i)}
               />
           {/each}
       </div>
@@ -158,6 +223,21 @@
       border-radius: 8px;
       overflow-y: auto; 
       max-height: 50vh;
+      scrollbar-width: thin;
+      scrollbar-color: rgba(255, 255, 255, 0.2) transparent;
+    }
+    
+    .checkbox-container::-webkit-scrollbar {
+      width: 6px;
+    }
+    
+    .checkbox-container::-webkit-scrollbar-track {
+      background: transparent;
+    }
+    
+    .checkbox-container::-webkit-scrollbar-thumb {
+      background-color: rgba(255, 255, 255, 0.2);
+      border-radius: 10px;
     }
   
     .video-container {

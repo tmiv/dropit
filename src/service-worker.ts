@@ -3,7 +3,6 @@ declare const self: ServiceWorkerGlobalScope;
 
 import { precacheAndRoute, cleanupOutdatedCaches } from 'workbox-precaching';
 import { clientsClaim } from 'workbox-core';
-import { WorkoutDB } from './lib/db'
 
 // Claim control immediately
 self.skipWaiting();
@@ -15,37 +14,54 @@ cleanupOutdatedCaches();
 // Precache and route all static assets
 precacheAndRoute(self.__WB_MANIFEST);
 
-// IndexedDB setup and workout management
-const DB_NAME = 'workout-db';
-const DB_VERSION = 1;
+// Import the singleton instance and shared functions from db.ts
+import { db } from './lib/db';
 
 // Function to calculate time left for a set
 function getTimeLeft(startTime: number | null): number {
-  if (!startTime) return 3600;
+  if (!startTime) return 2700; // 45 minutes
   const elapsed = Math.floor((Date.now() - startTime) / 1000);
-  return Math.max(3600 - elapsed, 0);
+  return Math.max(2700 - elapsed, 0);
 }
 
-// Helper function to open IndexedDB
-async function openDB(): Promise<IDBDatabase> {
-  return new Promise((resolve, reject) => {
-    const request = indexedDB.open(DB_NAME, DB_VERSION);
-    
-    request.onerror = () => reject(request.error);
-    request.onsuccess = () => resolve(request.result);
-    
-    request.onupgradeneeded = (event) => {
-      const db = (event.target as IDBOpenDBRequest).result;
-      if (!db.objectStoreNames.contains('workouts')) {
-        db.createObjectStore('workouts', { keyPath: 'date' });
-      }
-    };
-  });
+// Function to send a notification to the user
+async function sendNotification(setIndex: number) {
+  try {
+    // Check if we have permission
+    if (self.registration.showNotification) {
+      const title = 'Time for squats!';
+      const options = {
+        body: `Set ${setIndex + 1} is due - time to do your squats!`,
+        icon: '/GSquat-192.png',
+        badge: '/GSquat-192.png',
+        vibrate: [200, 100, 200, 100, 200],
+        tag: 'squat-reminder',
+        data: {
+          setIndex: setIndex,
+          url: '/?setIndex=' + setIndex, // This will be used to open the app to the right set
+        },
+        actions: [
+          {
+            action: 'open',
+            title: 'Start set now'
+          },
+          {
+            action: 'dismiss',
+            title: 'Dismiss'
+          }
+        ]
+      };
+      
+      await self.registration.showNotification(title, options);
+    }
+  } catch (error) {
+    console.error('Error sending notification:', error);
+  }
 }
 
 setInterval(async () => {
-  const db = new WorkoutDB();
-  await db.init()
+  // Make sure DB is initialized
+  await db.init();
   const workout = await db.getTodayWorkout();
   const today = new Date().toISOString().split('T')[0];
   
@@ -55,15 +71,15 @@ setInterval(async () => {
           date: today,
           sets: Array(8).fill(null).map((_, i) => ({
               id: i,
-              enabled: i === 0,
-              checked: false,
-              timeLeft: 3600,
+              state: i === 0 ? 'next' : 'future',
+              timeLeft: 2700, // 45 minutes
               startTime: null,
-              completionTime: null
+              completionTime: null,
+              dueTime: i === 0 ? db.getFirstSetDueTime() : null
           }))
       };
      
-      db.saveWorkout(newWorkout);
+      await db.saveWorkout(newWorkout);
 
       const clients = await self.clients.matchAll();
       clients.forEach(client => {
@@ -73,14 +89,47 @@ setInterval(async () => {
   
   // Check existing timers
   if (workout) {
+      let updatedWorkout = false;
+      const now = Date.now();
+      
       workout.sets.forEach((set, index) => {
-          if (set.startTime && !set.checked) {
-              const timeLeft = getTimeLeft(set.startTime);
-              if (timeLeft === 0) {
-                  //sendNotification(index);
+          // Check if any 'next' sets have reached their due time
+          if (set.state === 'next' && set.dueTime && now >= set.dueTime) {
+              // Transition to 'due' state
+              set.state = 'due';
+              updatedWorkout = true;
+              
+              // Send notification
+              sendNotification(index);
+          }
+          
+          // Check if any 'active' sets have been active for too long (auto-complete after 10 mins)
+          if (set.state === 'active' && set.startTime && (now - set.startTime) > 10 * 60 * 1000) {
+              set.state = 'completed';
+              set.completionTime = new Date().toLocaleTimeString();
+              updatedWorkout = true;
+              
+              // Enable next set if exists
+              if (index < workout.sets.length - 1) {
+                  const nextSet = workout.sets[index + 1];
+                  if (nextSet.state === 'future') {
+                      nextSet.state = 'next';
+                      nextSet.dueTime = db.calculateNextDueTime(now);
+                      updatedWorkout = true;
+                  }
               }
           }
       });
+      
+      // Save workout if any changes were made
+      if (updatedWorkout) {
+          await db.saveWorkout(workout);
+          
+          const clients = await self.clients.matchAll();
+          clients.forEach(client => {
+              client.postMessage({ type: 'WORKOUT_UPDATED' });
+          });
+      }
   }
 }, 60000); 
 
@@ -99,8 +148,48 @@ self.addEventListener('push', (event) => {
 });
 
 self.addEventListener('notificationclick', (event) => {
-  event.notification.close();
+  const notification = event.notification;
+  const action = event.action;
+  const setIndex = notification.data?.setIndex;
+  
+  // Close the notification
+  notification.close();
+  
+  // Handle different actions
+  if (action === 'dismiss') {
+    // Just close the notification, no further action
+    return;
+  }
+  
+  // Handle open action or default click (no specific action)
   event.waitUntil(
-    self.clients.openWindow('/')
+    (async () => {
+      // Look for existing open windows
+      const allClients = await self.clients.matchAll({
+        includeUncontrolled: true,
+        type: 'window'
+      });
+      
+      // If we have an open window, focus it and navigate to the set
+      if (allClients.length > 0) {
+        const client = allClients[0];
+        await client.focus();
+        // Send a message to the client to activate the set
+        if (setIndex !== undefined) {
+          return client.postMessage({ 
+            type: 'ACTIVATE_SET', 
+            setIndex: setIndex 
+          });
+        }
+        return;
+      }
+      
+      // If no window is open, open one with the set index in the URL
+      let url = '/';
+      if (setIndex !== undefined) {
+        url += `?setIndex=${setIndex}`;
+      }
+      return self.clients.openWindow(url);
+    })()
   );
 });
