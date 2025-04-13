@@ -1,6 +1,6 @@
 <!-- SetCard.svelte -->
 <script lang="ts">
-	import { SetState } from "../lib/db";
+	import { type SetState } from "../lib/db";
 
     export let setNumber: number;
     export let state: SetState;
