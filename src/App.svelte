@@ -196,6 +196,7 @@
       padding: 2rem;
       background-color: #8ea897;
       min-height: 100vh;
+      height: 100%;
     }
 
     .title {
@@ -211,6 +212,8 @@
       gap: 2rem;
       max-width: 1200px;
       margin: 0 auto;
+      flex-direction: row;
+      height: 100%;
     }
   
     .checkbox-container {
@@ -225,6 +228,36 @@
       max-height: 50vh;
       scrollbar-width: thin;
       scrollbar-color: rgba(255, 255, 255, 0.2) transparent;
+    }
+  
+    @media (orientation: portrait) {
+      .content-wrapper {
+        flex-direction: column;
+        height: calc(100vh - 8rem);
+        gap: 0;
+      }
+      
+      .checkbox-container {
+        flex-grow: 1;
+        flex:0.65;
+        padding-bottom: 0;
+      }
+      
+      .video-container {
+        max-height: 35vh;
+        max-width: 35vh;
+        margin-left: auto;
+        margin-right: auto;
+        justify-content: center;
+        align-items: center;
+      }
+      
+      video {
+        max-height: 100%;
+        width: auto;
+        max-width: 100%;
+        object-fit: contain;
+      }
     }
     
     .checkbox-container::-webkit-scrollbar {
@@ -244,12 +277,14 @@
       flex: 1;
       display: flex;
       align-items: center;
+      justify-content: center;
     }
   
     video {
       width: 100%;
       height: auto;
       border-radius: 8px;
+      max-height: 50vh;
     }
 
     .install-button {
