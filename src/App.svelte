@@ -244,7 +244,6 @@
       }
       
       .video-container {
-        max-height: 35vh;
         max-width: 35vh;
         margin-left: auto;
         margin-right: auto;

@@ -1,8 +1,10 @@
 import { writable } from 'svelte/store';
 
+export type SetState = 'completed' | 'next' | 'due' | 'active' | 'future';
+
 export interface WorkoutSet {
     id: number;
-    state: 'completed' | 'next' | 'due' | 'active' | 'future';
+    state: SetState;
     timeLeft: number;
     startTime: number | null;  // Unix timestamp when timer started
     completionTime: string | null;  // Time when set was completed

@@ -1,7 +1,9 @@
 <!-- SetCard.svelte -->
 <script lang="ts">
+	import { SetState } from "../lib/db";
+
     export let setNumber: number;
-    export let state: 'completed' | 'next' | 'due' | 'active' | 'future'; // Updated possible states
+    export let state: SetState;
     export let timeLeft: number = 0; // For 'next' state countdown
     export let completionTime: string | null = null; // For 'completed' state
     export let dueTime: number | null = null; // When this set is scheduled to be due

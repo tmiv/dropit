@@ -15,7 +15,7 @@ cleanupOutdatedCaches();
 precacheAndRoute(self.__WB_MANIFEST);
 
 // Import the singleton instance and shared functions from db.ts
-import { db } from './lib/db';
+import { db, SetState } from './lib/db';
 
 // Function to calculate time left for a set
 function getTimeLeft(startTime: number | null): number {
@@ -71,7 +71,7 @@ setInterval(async () => {
           date: today,
           sets: Array(8).fill(null).map((_, i) => ({
               id: i,
-              state: i === 0 ? 'next' : 'future',
+              state: (i === 0 ? 'next' : 'future') as SetState,
               timeLeft: 2700, // 45 minutes
               startTime: null,
               completionTime: null,
