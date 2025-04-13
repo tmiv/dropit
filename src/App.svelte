@@ -239,7 +239,6 @@
       
       .checkbox-container {
         flex-grow: 1;
-        flex:0.65;
         padding-bottom: 0;
       }
       
