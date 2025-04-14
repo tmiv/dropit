@@ -38,7 +38,21 @@
         
         // Request notification permission
         if ('Notification' in window) {
-            await Notification.requestPermission();
+            const permission = await Notification.requestPermission();
+            
+            // If permission is granted, register for background sync
+            if (permission === 'granted' && 'serviceWorker' in navigator) {
+                const registration = await navigator.serviceWorker.ready;
+                
+                // Try to register for sync if available (helps with mobile devices)
+                if ('sync' in registration) {
+                    try {
+                        await registration.sync.register('check-sets');
+                    } catch (e) {
+                        console.error('Failed to register sync:', e);
+                    }
+                }
+            }
         }
 
         // Set up broadcast channel for cross-tab communication
@@ -82,6 +96,31 @@
             // Clean up the URL
             window.history.replaceState({}, document.title, window.location.pathname);
         }
+        
+        // Auto-scroll to the 'next' set when the app opens
+        // Add a small delay to ensure DOM is fully rendered
+        setTimeout(() => {
+            if (workout && workout.sets) {
+                // Check if all sets are complete
+                const allComplete = workout.sets.every(set => set.state === 'completed');
+                
+                if (!allComplete) {
+                    // Find the index of the first 'next' set
+                    const nextSetIndex = workout.sets.findIndex(set => set.state === 'next');
+                    if (nextSetIndex !== -1) {
+                        // Get all set cards
+                        const setCards = document.querySelectorAll('.set-card');
+                        if (setCards && setCards[nextSetIndex]) {
+                            // Scroll the container to show the 'next' set
+                            const container = document.querySelector('.checkbox-container');
+                            if (container) {
+                                setCards[nextSetIndex].scrollIntoView({ behavior: 'smooth', block: 'center' });
+                            }
+                        }
+                    }
+                }
+            }
+        }, 100);
     });
 
   async function installApp() {

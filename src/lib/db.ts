@@ -58,7 +58,9 @@ export class WorkoutDB {
     }
 
     async getTodayWorkout(): Promise<DailyWorkout> {
-        const today = new Date().toISOString().split('T')[0];
+        // Use local date format instead of UTC
+        const now = new Date();
+        const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
         const workout = await this.getWorkout(today);
         
         if (workout) {
